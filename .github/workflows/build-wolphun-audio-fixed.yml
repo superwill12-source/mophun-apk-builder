@@ -1,0 +1,167 @@
+name: Build Wolphun Android APK
+
+on:
+  workflow_dispatch:
+
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+concurrency:
+  group: wolphun-android-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Compile and publish Wolphun
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+
+    env:
+      ANDROID_HOME: /usr/local/lib/android/sdk
+      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+      GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.jvmargs=-Xmx3g
+
+    steps:
+      - name: Checkout workflow repository
+        uses: actions/checkout@v4
+
+      - name: Checkout Wolphun source
+        uses: actions/checkout@v4
+        with:
+          repository: jamisson2006/wolphun-a-Mophun-emulator
+          ref: main
+          path: wolphun
+
+      - name: Set up Java 8
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '8'
+
+      - name: Locate Android SDK tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -d "$ANDROID_HOME" || {
+            echo "::error::Android SDK não encontrado em $ANDROID_HOME"
+            exit 1
+          }
+
+          SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" \
+            -type f -name sdkmanager -print -quit 2>/dev/null || true)"
+          if [ -z "$SDKMANAGER" ]; then
+            echo "::error::sdkmanager não encontrado dentro de $ANDROID_HOME/cmdline-tools"
+            find "$ANDROID_HOME" -maxdepth 4 -type f -name sdkmanager -print || true
+            exit 1
+          fi
+
+          echo "$(dirname "$SDKMANAGER")" >> "$GITHUB_PATH"
+          echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
+          echo "SDKMANAGER=$SDKMANAGER" >> "$GITHUB_ENV"
+          "$SDKMANAGER" --version
+
+      - name: Accept Android SDK licenses
+        shell: bash
+        run: |
+          set -e
+          yes | "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --licenses || true
+
+      - name: Install Android SDK and NDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --install \
+            "platform-tools" \
+            "platforms;android-29" \
+            "build-tools;29.0.3" \
+            "cmake;3.10.2" \
+            "ndk;21.4.7075529"
+
+      - name: Prepare Wolphun Android build
+        working-directory: wolphun/android
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f gradlew || {
+            echo "::error::Não encontrei wolphun/android/gradlew"
+            ls -la
+            exit 1
+          }
+          test -f app/build.gradle || {
+            echo "::error::Não encontrei wolphun/android/app/build.gradle"
+            exit 1
+          }
+
+          chmod +x gradlew
+
+          # O projeto fixa um NDK r30 RC antigo, que não está disponível
+          # de forma confiável no runner. Remove apenas a declaração fixa
+          # para usar o NDK r21 instalado acima, mantendo o módulo C/C++.
+          sed -i "/^[[:space:]]*ndkVersion[[:space:]]/d" app/build.gradle
+
+          echo "Configuração efetiva:"
+          grep -nE 'compileSdkVersion|buildToolsVersion|externalNativeBuild|ndkVersion' app/build.gradle || true
+          echo "Gradle wrapper:"
+          ./gradlew --version
+
+      - name: Compile Android APK
+        working-directory: wolphun/android
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./gradlew --no-daemon --stacktrace assembleDebug
+
+      - name: Verify and collect APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-files
+
+          mapfile -t APKS < <(
+            find wolphun/android/app/build/outputs/apk \
+              -type f -name '*.apk' -print
+          )
+
+          if [ "${#APKS[@]}" -eq 0 ]; then
+            echo "::error::A compilação terminou sem gerar APK."
+            find wolphun/android/app/build/outputs -maxdepth 5 -type f -print || true
+            exit 1
+          fi
+
+          # O buildDebug deve gerar um único APK; preserva todos se houver mais.
+          for apk in "${APKS[@]}"; do
+            cp "$apk" "release-files/$(basename "$apk")"
+          done
+
+          echo "APK(s) gerado(s):"
+          ls -lh release-files/
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Wolphun-Android-APK
+          path: release-files/*.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: "wolphun-audio-${{ github.run_number }}"
+          name: "Wolphun Android APK ${{ github.run_number }}"
+          body: |
+            Build Android do Wolphun, emulador Mophun independente.
+
+            Use este APK para testar o áudio do Honey Cave 2.
+            O suporte a MIDI e PCM/ADPCM existe no projeto, mas o áudio
+            correto de cada jogo precisa ser confirmado no aparelho.
+
+            Código-fonte: https://github.com/jamisson2006/wolphun-a-Mophun-emulator
+          draft: false
+          prerelease: false
+          files: release-files/*.apk
+          fail_on_unmatched_files: true
