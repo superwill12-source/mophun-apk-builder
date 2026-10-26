@@ -1,4 +1,3 @@
-
 name: Build and publish AbyssME APK
 
 on:
@@ -7,6 +6,7 @@ on:
       - main
     tags:
       - "v*"
+
   workflow_dispatch:
 
 permissions:
@@ -14,9 +14,10 @@ permissions:
 
 jobs:
   build:
-    name: Build Android APK
+    name: Build and publish Android APK
     runs-on: ubuntu-22.04
     timeout-minutes: 60
+
     env:
       ANDROID_HOME: /usr/local/lib/android/sdk
       ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
@@ -40,15 +41,13 @@ jobs:
           cache: gradle
           cache-dependency-path: abyssme/gradle/wrapper/gradle-wrapper.properties
 
-      # Do not use android-actions/setup-android here: its default package
-      # setup is failing while trying to resolve the obsolete "tools" package.
-      - name: Locate preinstalled Android SDK manager
+      - name: Locate Android SDK manager
         shell: bash
         run: |
           set -euo pipefail
 
           if [ ! -d "$ANDROID_HOME" ]; then
-            echo "Android SDK directory not found: $ANDROID_HOME"
+            echo "Android SDK não encontrado: $ANDROID_HOME"
             exit 1
           fi
 
@@ -56,14 +55,12 @@ jobs:
             -type f -name sdkmanager -print -quit)"
 
           if [ -z "$SDKMANAGER" ]; then
-            echo "sdkmanager was not found in the preinstalled Android SDK."
-            find "$ANDROID_HOME" -maxdepth 4 -type f -name sdkmanager -print
+            echo "sdkmanager não encontrado."
             exit 1
           fi
 
           echo "$(dirname "$SDKMANAGER")" >> "$GITHUB_PATH"
           echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
-          echo "Found sdkmanager: $SDKMANAGER"
 
       - name: Accept Android SDK licenses
         shell: bash
@@ -74,7 +71,7 @@ jobs:
           set -o pipefail
 
           if [ "$result" -ne 0 ]; then
-            echo "Failed to accept Android SDK licenses."
+            echo "Falha ao aceitar as licenças do SDK."
             exit "$result"
           fi
 
@@ -92,21 +89,12 @@ jobs:
               exit 0
             fi
 
-            echo "SDK install attempt ${attempt} failed; retrying in 15 seconds."
+            echo "Tentativa $attempt falhou. Tentando novamente..."
             sleep 15
           done
 
-          echo "Could not install required Android SDK components."
+          echo "Falha ao instalar componentes do Android SDK."
           exit 1
-
-      - name: Verify Android SDK
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -d "$ANDROID_HOME/platforms/android-34"
-          test -d "$ANDROID_HOME/build-tools/34.0.0"
-          test -d "$ANDROID_HOME/ndk/22.1.7171670"
-          echo "Required Android SDK components are available."
 
       - name: Build AbyssME APK
         working-directory: abyssme
@@ -116,20 +104,24 @@ jobs:
           chmod +x ./gradlew
           ./gradlew --no-daemon --stacktrace :app:assembleFdroidDebug
 
-      - name: Collect APK
+      - name: Prepare APK
         shell: bash
         run: |
           set -euo pipefail
+
           mkdir -p release-files
+
           find abyssme/app/build/outputs/apk \
             -type f -name '*.apk' \
             -exec cp '{}' release-files/ ';'
 
-          if ! find release-files -maxdepth 1 -type f -name '*.apk' | grep -q .; then
-            echo "Build finished but no APK was found."
+          if ! find release-files -maxdepth 1 \
+            -type f -name '*.apk' | grep -q .; then
+            echo "Nenhum APK foi gerado."
             exit 1
           fi
 
+          echo "APKs gerados:"
           ls -lh release-files/
 
       - name: Upload APK artifact
@@ -140,11 +132,21 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      - name: Publish GitHub Release
-        if: startsWith(github.ref, 'refs/tags/')
+      - name: Publish public GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          name: "AbyssME Mophun ${{ github.ref_name }}"
-          generate_release_notes: true
+          tag_name: "build-${{ github.run_number }}"
+          name: "AbyssME Mophun Build ${{ github.run_number }}"
+          body: |
+            APK do emulador AbyssME com suporte experimental a Mophun.
+
+            Instalação:
+            1. Baixe o APK anexado a esta Release.
+            2. Abra o arquivo no Android.
+            3. Se necessário, permita a instalação de aplicativos desta fonte.
+
+            Observação: o suporte a jogos Mophun é experimental.
+          draft: false
+          prerelease: false
           files: release-files/*.apk
           fail_on_unmatched_files: true
