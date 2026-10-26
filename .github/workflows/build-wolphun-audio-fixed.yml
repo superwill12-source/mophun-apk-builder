@@ -71,7 +71,7 @@ jobs:
           set -e
           yes | "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --licenses || true
 
-      - name: Install Android SDK and NDK
+      - name: Install Android SDK, CMake, and NDK
         shell: bash
         run: |
           set -euo pipefail
@@ -79,7 +79,7 @@ jobs:
             "platform-tools" \
             "platforms;android-29" \
             "build-tools;29.0.3" \
-            "cmake;3.10.2" \
+            "cmake;3.22.1" \
             "ndk;21.4.7075529"
 
       - name: Prepare Wolphun Android build
