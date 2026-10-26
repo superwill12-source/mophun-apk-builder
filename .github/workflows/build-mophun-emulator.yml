@@ -1,26 +1,21 @@
-name: Build AbyssME Android APK (Mophun)
+name: Build and publish AbyssME APK
 
 on:
-  workflow_dispatch:
   push:
-    branches: [main]
-    paths:
-      - ".github/workflows/build-mophun-emulator.yml"
-      - "README.md"
+    tags:
+      - "v*"
+  workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  build:
+  build-and-release:
     runs-on: ubuntu-22.04
-    timeout-minutes: 45
-    env:
-      ANDROID_HOME: /usr/local/lib/android/sdk
-      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+    timeout-minutes: 60
 
     steps:
-      - name: Checkout workflow repository
+      - name: Checkout this repository
         uses: actions/checkout@v4
 
       - name: Checkout AbyssME source
@@ -30,33 +25,63 @@ jobs:
           ref: main
           path: abyssme
 
-      - name: Set up JDK 17
+      - name: Set up Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
+          cache: gradle
+          cache-dependency-path: abyssme/**/*.gradle*
 
-      # GitHub-hosted Ubuntu images include Android SDK packages.
-      # Avoid setup-android/sdkmanager here because sdkmanager failed
-      # while computing updates in the previous run.
-      - name: Check preinstalled Android SDK
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK packages
+        shell: bash
         run: |
-          echo "ANDROID_HOME=$ANDROID_HOME"
-          test -d "$ANDROID_HOME"
-          ls "$ANDROID_HOME/platforms" || true
-          ls "$ANDROID_HOME/build-tools" || true
-          ls "$ANDROID_HOME/ndk" || true
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            if yes | sdkmanager --install \
+              "platform-tools" \
+              "platforms;android-35" \
+              "build-tools;35.0.0"; then
+              exit 0
+            fi
+            echo "Tentativa ${attempt} falhou. Tentando novamente..."
+            sleep 10
+          done
+          exit 1
 
-      - name: Build debug APK with Mophun support
+      - name: Build APKs
         working-directory: abyssme
+        shell: bash
         run: |
           chmod +x ./gradlew
-          ./gradlew --no-daemon :app:assembleFdroidDebug
+          ./gradlew --no-daemon :app:assembleFdroidDebug :app:assemblePhoneDebug
 
-      - name: Upload APK artifact
+      - name: Collect APK files
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-apks
+          find abyssme/app/build/outputs/apk \
+            -type f -name '*.apk' \
+            -exec cp '{}' release-apks/ ';'
+          test -n "$(find release-apks -maxdepth 1 -type f -name '*.apk' -print -quit)"
+
+      - name: Upload APK artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: AbyssME-Mophun-Android-APK
-          path: abyssme/app/build/outputs/apk/**/*.apk
+          name: AbyssME-Mophun-APKs
+          path: release-apks/*.apk
           if-no-files-found: error
           retention-days: 14
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "AbyssME Mophun ${{ github.ref_name }}"
+          generate_release_notes: true
+          files: release-apks/*.apk
+          fail_on_unmatched_files: true
