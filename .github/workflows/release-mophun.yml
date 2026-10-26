@@ -1,0 +1,82 @@
+name: Build and publish AbyssME APK
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout this repository
+        uses: actions/checkout@v4
+
+      - name: Checkout AbyssME source
+        uses: actions/checkout@v4
+        with:
+          repository: EriArk/JavaEmulator
+          ref: main
+          path: abyssme
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+          cache-dependency-path: abyssme/**/*.gradle*
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install required Android SDK packages (retry on transient SDK errors)
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            if sdkmanager --install "platform-tools" "platforms;android-35" "build-tools;35.0.0"; then
+              exit 0
+            fi
+            echo "sdkmanager attempt ${attempt} failed; retrying in 10 seconds..."
+            sleep 10
+          done
+          exit 1
+
+      - name: Build APKs
+        working-directory: abyssme
+        shell: bash
+        run: |
+          chmod +x ./gradlew
+          ./gradlew --no-daemon :app:assembleFdroidDebug :app:assemblePhoneDebug
+
+      - name: Collect APK files
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-apks
+          find abyssme/app/build/outputs/apk -type f -name '*.apk' -exec cp '{}' release-apks/ ';'
+          test -n "$(find release-apks -maxdepth 1 -type f -name '*.apk' -print -quit)"
+
+      - name: Upload APKs as workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: AbyssME-Mophun-APKs
+          path: release-apks/*.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publish GitHub Release when triggered by a version tag
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "AbyssME Mophun ${{ github.ref_name }}"
+          generate_release_notes: true
+          files: release-apks/*.apk
+          fail_on_unmatched_files: true
