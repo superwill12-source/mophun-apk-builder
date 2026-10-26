@@ -1,0 +1,57 @@
+name: Build AbyssME Android APK (Mophun)
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/build-mophun-emulator.yml"
+      - "README.md"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout workflow repository
+        uses: actions/checkout@v4
+
+      - name: Checkout AbyssME source
+        uses: actions/checkout@v4
+        with:
+          repository: EriArk/JavaEmulator
+          ref: main
+          path: abyssme
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK components
+        run: |
+          sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0" "ndk;22.1.7171670"
+          yes | sdkmanager --licenses
+
+      - name: Build debug APK with Mophun support
+        working-directory: abyssme
+        run: |
+          chmod +x ./gradlew
+          ./gradlew --no-daemon :app:assembleFdroidDebug
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AbyssME-Mophun-Android-APK
+          path: abyssme/app/build/outputs/apk/**/*.apk
+          if-no-files-found: error
+          retention-days: 14
