@@ -1,3 +1,4 @@
+
 name: Build and publish AbyssME APK
 
 on:
@@ -6,7 +7,6 @@ on:
       - main
     tags:
       - "v*"
-
   workflow_dispatch:
 
 permissions:
@@ -17,7 +17,6 @@ jobs:
     name: Build Android APK
     runs-on: ubuntu-22.04
     timeout-minutes: 60
-
     env:
       ANDROID_HOME: /usr/local/lib/android/sdk
       ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
@@ -41,24 +40,43 @@ jobs:
           cache: gradle
           cache-dependency-path: abyssme/gradle/wrapper/gradle-wrapper.properties
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Locate Android SDK manager
+      # Do not use android-actions/setup-android here: its default package
+      # setup is failing while trying to resolve the obsolete "tools" package.
+      - name: Locate preinstalled Android SDK manager
         shell: bash
         run: |
           set -euo pipefail
+
+          if [ ! -d "$ANDROID_HOME" ]; then
+            echo "Android SDK directory not found: $ANDROID_HOME"
+            exit 1
+          fi
 
           SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" \
             -type f -name sdkmanager -print -quit)"
 
           if [ -z "$SDKMANAGER" ]; then
-            echo "Erro: sdkmanager não encontrado."
+            echo "sdkmanager was not found in the preinstalled Android SDK."
+            find "$ANDROID_HOME" -maxdepth 4 -type f -name sdkmanager -print
             exit 1
           fi
 
           echo "$(dirname "$SDKMANAGER")" >> "$GITHUB_PATH"
-          echo "SDK manager encontrado."
+          echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
+          echo "Found sdkmanager: $SDKMANAGER"
+
+      - name: Accept Android SDK licenses
+        shell: bash
+        run: |
+          set +o pipefail
+          yes | sdkmanager --sdk_root="$ANDROID_HOME" --licenses
+          result=$?
+          set -o pipefail
+
+          if [ "$result" -ne 0 ]; then
+            echo "Failed to accept Android SDK licenses."
+            exit "$result"
+          fi
 
       - name: Install Android SDK components
         shell: bash
@@ -74,60 +92,44 @@ jobs:
               exit 0
             fi
 
-            echo "Tentativa $attempt falhou. Tentando novamente..."
+            echo "SDK install attempt ${attempt} failed; retrying in 15 seconds."
             sleep 15
           done
 
-          echo "Erro ao instalar os componentes do Android SDK."
+          echo "Could not install required Android SDK components."
           exit 1
 
-      - name: Accept Android SDK licenses
+      - name: Verify Android SDK
         shell: bash
         run: |
-          set +o pipefail
-          yes | sdkmanager --sdk_root="$ANDROID_HOME" --licenses
-          result=$?
-          set -o pipefail
+          set -euo pipefail
+          test -d "$ANDROID_HOME/platforms/android-34"
+          test -d "$ANDROID_HOME/build-tools/34.0.0"
+          test -d "$ANDROID_HOME/ndk/22.1.7171670"
+          echo "Required Android SDK components are available."
 
-          if [ "$result" -ne 0 ]; then
-            echo "Erro ao aceitar as licenças do SDK."
-            exit "$result"
-          fi
-
-      - name: Check Gradle configuration
+      - name: Build AbyssME APK
         working-directory: abyssme
         shell: bash
         run: |
           set -euo pipefail
           chmod +x ./gradlew
-          ./gradlew --version
+          ./gradlew --no-daemon --stacktrace :app:assembleFdroidDebug
 
-      - name: Compile Android APK
-        working-directory: abyssme
+      - name: Collect APK
         shell: bash
         run: |
           set -euo pipefail
-          ./gradlew --no-daemon --stacktrace \
-            :app:assembleFdroidDebug
-
-      - name: Prepare APK
-        shell: bash
-        run: |
-          set -euo pipefail
-
           mkdir -p release-files
-
           find abyssme/app/build/outputs/apk \
             -type f -name '*.apk' \
             -exec cp '{}' release-files/ ';'
 
-          if ! find release-files -maxdepth 1 \
-            -type f -name '*.apk' | grep -q .; then
-            echo "Erro: nenhum APK foi gerado."
+          if ! find release-files -maxdepth 1 -type f -name '*.apk' | grep -q .; then
+            echo "Build finished but no APK was found."
             exit 1
           fi
 
-          echo "APK gerado:"
           ls -lh release-files/
 
       - name: Upload APK artifact
