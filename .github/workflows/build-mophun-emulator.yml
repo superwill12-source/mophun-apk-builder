@@ -3,8 +3,7 @@ name: Build AbyssME Android APK (Mophun)
 on:
   workflow_dispatch:
   push:
-    branches:
-      - main
+    branches: [main]
     paths:
       - ".github/workflows/build-mophun-emulator.yml"
       - "README.md"
@@ -14,8 +13,11 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     timeout-minutes: 45
+    env:
+      ANDROID_HOME: /usr/local/lib/android/sdk
+      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
 
     steps:
       - name: Checkout workflow repository
@@ -28,19 +30,22 @@ jobs:
           ref: main
           path: abyssme
 
-      - name: Set up JDK 21
+      - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "21"
+          java-version: "17"
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install Android SDK components
+      # GitHub-hosted Ubuntu images include Android SDK packages.
+      # Avoid setup-android/sdkmanager here because sdkmanager failed
+      # while computing updates in the previous run.
+      - name: Check preinstalled Android SDK
         run: |
-          sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0" "ndk;22.1.7171670"
-          yes | sdkmanager --licenses
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          test -d "$ANDROID_HOME"
+          ls "$ANDROID_HOME/platforms" || true
+          ls "$ANDROID_HOME/build-tools" || true
+          ls "$ANDROID_HOME/ndk" || true
 
       - name: Build debug APK with Mophun support
         working-directory: abyssme
