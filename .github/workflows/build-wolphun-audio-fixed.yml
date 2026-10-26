@@ -36,11 +36,11 @@ jobs:
           ref: main
           path: wolphun
 
-      - name: Set up Java 8
+      - name: Set up Java 11 for Android SDK tools
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '8'
+          java-version: '11'
 
       - name: Locate Android SDK tools
         shell: bash
@@ -62,6 +62,7 @@ jobs:
           echo "$(dirname "$SDKMANAGER")" >> "$GITHUB_PATH"
           echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
           echo "SDKMANAGER=$SDKMANAGER" >> "$GITHUB_ENV"
+          java -version
           "$SDKMANAGER" --version
 
       - name: Accept Android SDK licenses
@@ -107,6 +108,12 @@ jobs:
           grep -nE 'compileSdkVersion|buildToolsVersion|externalNativeBuild|ndkVersion' app/build.gradle || true
           echo "Gradle wrapper:"
           ./gradlew --version
+
+      - name: Switch to Java 8 for legacy Gradle project
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '8'
 
       - name: Compile Android APK
         working-directory: wolphun/android
